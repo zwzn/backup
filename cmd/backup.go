@@ -17,6 +17,8 @@ package cmd
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"github.com/zwzn/backup/backend"
 	"github.com/zwzn/backup/backup"
 )
 
@@ -26,10 +28,15 @@ var backupCmd = &cobra.Command{
 	Short: "Initiate a backup to the backup server",
 	Long:  ``,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return backup.Backup("/home/adam")
+		return backup.Backup("./", &backup.Options{
+			Ignore:  viper.GetStringSlice("ignore"),
+			Backend: backend.NewFile("./backup-folder"),
+		})
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(backupCmd)
+
+	viper.SetDefault("ignore", []string{})
 }
