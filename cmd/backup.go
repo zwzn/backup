@@ -28,9 +28,18 @@ var backupCmd = &cobra.Command{
 	Short: "Initiate a backup to the backup server",
 	Long:  ``,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		backendUris := viper.GetStringSlice("backends")
+		backends := []backend.Backend{}
+		for _, uri := range backendUris {
+			b, err := backend.Load(uri)
+			if err != nil {
+				return err
+			}
+			backends = append(backends, b)
+		}
 		return backup.Backup("./", &backup.Options{
-			Ignore:  viper.GetStringSlice("ignore"),
-			Backend: backend.NewFile("./backup-folder"),
+			Ignore:   viper.GetStringSlice("ignore"),
+			Backends: backends,
 		})
 	},
 }
@@ -39,4 +48,5 @@ func init() {
 	rootCmd.AddCommand(backupCmd)
 
 	viper.SetDefault("ignore", []string{})
+	viper.SetDefault("backends", []string{})
 }

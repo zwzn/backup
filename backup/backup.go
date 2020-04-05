@@ -15,8 +15,8 @@ import (
 )
 
 type Options struct {
-	Backend backend.Backend
-	Ignore  []string
+	Backends []backend.Backend
+	Ignore   []string
 }
 
 func printTime(start time.Time) {
@@ -70,11 +70,14 @@ func backup(dir string, db *bbolt.DB, o *Options) error {
 
 				file, err := os.Open(p)
 				if err != nil {
-					panic(err)
+					return err
 				}
-				err = backend.Push(o.Backend, p, t, file)
-				if err != nil {
-					panic(err)
+
+				for _, b := range o.Backends {
+					err = b.Push(p, t, file)
+					if err != nil {
+						return err
+					}
 				}
 				file.Close()
 

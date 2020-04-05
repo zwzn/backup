@@ -1,22 +1,32 @@
 package backend
 
 import (
-	"bytes"
-	"compress/gzip"
 	"fmt"
 	"io"
+	"net/url"
 )
 
+var ErrNoBackend = fmt.Errorf("no supported backend")
+
 type Backend interface {
-	push(path string, date int64, data io.Reader) error
+	Push(path string, date int64, data io.Reader) error
 }
 
-func Push(backend Backend, path string, date int64, data io.Reader) error {
-	fmt.Printf("save %s\n", path)
-	rBuf := bytes.NewBuffer([]byte(""))
-	_, err := io.Copy(gzip.NewWriter(rBuf), data)
+func Load(connection string) (Backend, error) {
+	u, err := url.Parse(connection)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return backend.push(path, date, rBuf)
+
+	creator, ok := backends[u.Scheme]
+	if !ok {
+		return nil, ErrNoBackend
+	}
+	return creator(u)
+}
+
+var backends = map[string]func(u *url.URL) (Backend, error){}
+
+func Register(scheme string, creator func(u *url.URL) (Backend, error)) {
+	backends[scheme] = creator
 }
