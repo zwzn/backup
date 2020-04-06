@@ -25,6 +25,10 @@ func NewFile(root string) Backend {
 	}
 }
 
+func (b *File) URI() string {
+	return "file://" + b.root
+}
+
 func (b *File) Push(p string, time int64, data io.Reader) error {
 	newFile := path.Join(b.root, fmt.Sprintf("%s-%d.gz", p, time))
 	err := os.MkdirAll(path.Dir(newFile), 0777)

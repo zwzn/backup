@@ -9,6 +9,7 @@ import (
 var ErrNoBackend = fmt.Errorf("no supported backend")
 
 type Backend interface {
+	URI() string
 	Push(path string, date int64, data io.Reader) error
 }
 
