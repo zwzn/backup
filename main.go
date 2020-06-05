@@ -15,7 +15,7 @@ limitations under the License.
 */
 package main
 
-import "github.com/zwzn/backup/cmd"
+import "github.com/abibby/backup/cmd"
 
 func main() {
 	cmd.Execute()
