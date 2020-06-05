@@ -68,14 +68,14 @@ func backup(dir string, db *bbolt.DB, o *Options) error {
 				}
 
 				if ut < f.ModTime().Unix() {
-					t := time.Now().Unix()
+					t := time.Now()
 
 					file, err := os.Open(p)
 					if err != nil {
 						return err
 					}
 
-					err = b.Push(p, t, file)
+					err = b.Write(p, t, file)
 					if err != nil {
 						return err
 					}
@@ -108,11 +108,11 @@ func getUpdatedTime(config, path string, db *bbolt.DB) (int64, error) {
 	return t, errors.Wrap(err, "failed to read database")
 }
 
-func setUpdatedTime(config, path string, db *bbolt.DB, t int64) error {
+func setUpdatedTime(config, path string, db *bbolt.DB, t time.Time) error {
 	err := db.Update(func(tx *bbolt.Tx) error {
 		timeBytes := make([]byte, 8)
 		b := tx.Bucket([]byte(config))
-		binary.LittleEndian.PutUint64(timeBytes, uint64(t))
+		binary.LittleEndian.PutUint64(timeBytes, uint64(t.Unix()))
 		return b.Put([]byte(path), timeBytes)
 	})
 

@@ -4,13 +4,23 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"time"
 )
 
 var ErrNoBackend = fmt.Errorf("no supported backend")
 
+type File interface {
+	Name() string
+	Versions() []time.Time
+	IsDir() bool
+	Data(time.Time) (io.ReadCloser, error)
+}
+
 type Backend interface {
 	URI() string
-	Push(path string, date int64, data io.Reader) error
+	Write(path string, date time.Time, data io.Reader) error
+	List(path string) ([]File, error)
+	Read(path string) (File, error)
 }
 
 func Load(connection string) (Backend, error) {
