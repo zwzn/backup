@@ -37,7 +37,8 @@ var backupCmd = &cobra.Command{
 			}
 			backends = append(backends, b)
 		}
-		return backup.Backup("./", &backup.Options{
+		dir := viper.GetString("dir")
+		return backup.Backup(dir, &backup.Options{
 			Ignore:   viper.GetStringSlice("ignore"),
 			Backends: backends,
 		})

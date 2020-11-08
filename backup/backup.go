@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,13 +15,22 @@ import (
 	"go.etcd.io/bbolt"
 )
 
+var filesBackedUp = 0
+
 type Options struct {
 	Backends []backend.Backend
 	Ignore   []string
 }
 
 func printTime(start time.Time) {
-	fmt.Println(time.Since(start).Truncate(time.Second))
+	t := time.Since(start)
+	if t > time.Second {
+		t = t.Truncate(time.Second)
+	}
+	if t > time.Millisecond {
+		t = t.Truncate(time.Millisecond)
+	}
+	fmt.Println(t)
 }
 
 func Backup(dir string, o *Options) error {
@@ -38,11 +48,11 @@ func Backup(dir string, o *Options) error {
 		}
 	}
 	defer printTime(time.Now())
-	err = backup(dir, db, o)
+	err = backupFolder(dir, db, o)
 	return err
 }
 
-func backup(dir string, db *bbolt.DB, o *Options) error {
+func backupFolder(dir string, db *bbolt.DB, o *Options) error {
 	var err error
 	files, err := ioutil.ReadDir(dir)
 
@@ -52,43 +62,53 @@ func backup(dir string, db *bbolt.DB, o *Options) error {
 
 	for _, f := range files {
 		p := path.Join(dir, f.Name())
-		if containsAny(p, o.Ignore) {
+		if matches(p, o.Ignore) {
 			continue
 		}
 		if f.IsDir() {
-			err = backup(p, db, o)
+			err = backupFolder(p, db, o)
 			if err != nil {
 				return err
 			}
 		} else {
 			for _, b := range o.Backends {
-				ut, err := getUpdatedTime(b.URI(), p, db)
+				err = backupFile(db, b, p, f)
 				if err != nil {
 					return err
-				}
-
-				if ut < f.ModTime().Unix() {
-					t := time.Now()
-
-					file, err := os.Open(p)
-					if err != nil {
-						return err
-					}
-
-					err = b.Write(p, t, file)
-					if err != nil {
-						return err
-					}
-					file.Close()
-
-					err = setUpdatedTime(b.URI(), p, db, t)
-					if err != nil {
-						return err
-					}
 				}
 			}
 		}
 	}
+	return nil
+}
+
+func backupFile(db *bbolt.DB, b backend.Backend, p string, f os.FileInfo) error {
+	ut, err := getUpdatedTime(b.URI(), p, db)
+	if err != nil {
+		return err
+	}
+
+	if ut < f.ModTime().Unix() {
+		t := time.Now()
+
+		file, err := os.Open(p)
+		if err != nil {
+			return err
+		}
+
+		err = b.Write(p, t, file)
+		if err != nil {
+			return err
+		}
+		file.Close()
+
+		err = setUpdatedTime(b.URI(), p, db, t)
+		if err != nil {
+			return err
+		}
+	}
+	filesBackedUp++
+	fmt.Printf("\r%d", filesBackedUp)
 	return nil
 }
 
@@ -119,9 +139,35 @@ func setUpdatedTime(config, path string, db *bbolt.DB, t time.Time) error {
 	return errors.Wrap(err, "failed to update database")
 }
 
-func containsAny(s string, substrs []string) bool {
-	for _, substr := range substrs {
-		if strings.Contains(s, substr) {
+var regexCache = map[string]*regexp.Regexp{}
+
+func toRegex(glob string) *regexp.Regexp {
+	re, ok := regexCache[glob]
+	if !ok {
+		strRe := ""
+		if strings.HasPrefix(glob, "/") {
+			glob = glob[1:]
+			strRe += "^"
+		}
+		reParts := []string{}
+		for _, part := range strings.Split(glob, "/") {
+			part = strings.ReplaceAll(part, "**", "👏")
+			part = strings.ReplaceAll(part, "*", `[^\/]*`)
+			part = strings.ReplaceAll(part, "👏", `.*`)
+			reParts = append(reParts, part)
+		}
+		strRe += strings.Join(reParts, `\/`)
+		strRe += "$"
+		re = regexp.MustCompile(strRe)
+		regexCache[glob] = re
+	}
+
+	return re
+}
+
+func matches(s string, globs []string) bool {
+	for _, glob := range globs {
+		if toRegex(glob).MatchString(s) {
 			return true
 		}
 	}

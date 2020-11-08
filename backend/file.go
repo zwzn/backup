@@ -13,6 +13,39 @@ import (
 	"time"
 )
 
+type FileFile struct {
+	backend  *FileBackend
+	name     string
+	versions []time.Time
+	isDir    bool
+}
+
+func (f *FileFile) Name() string {
+	return f.name
+}
+
+func (f *FileFile) Versions() []time.Time {
+	return f.versions
+}
+
+func (f *FileFile) IsDir() bool {
+	return f.isDir
+}
+
+func (f *FileFile) Data(t time.Time) (io.ReadCloser, error) {
+	p := f.backend.path(f.name, t)
+	file, err := os.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	zr, err := gzip.NewReader(file)
+
+	if err != nil {
+		return nil, err
+	}
+	return zr, nil
+}
+
 type FileBackend struct {
 	root string
 }
@@ -56,39 +89,6 @@ func (b *FileBackend) Write(p string, t time.Time, data io.Reader) error {
 		return err
 	}
 	return nil
-}
-
-type FileFile struct {
-	backend  *FileBackend
-	name     string
-	versions []time.Time
-	isDir    bool
-}
-
-func (f *FileFile) Name() string {
-	return f.name
-}
-
-func (f *FileFile) Versions() []time.Time {
-	return f.versions
-}
-
-func (f *FileFile) IsDir() bool {
-	return f.isDir
-}
-
-func (f *FileFile) Data(t time.Time) (io.ReadCloser, error) {
-	p := f.backend.path(f.name, t)
-	file, err := os.Open(p)
-	if err != nil {
-		return nil, err
-	}
-	zr, err := gzip.NewReader(file)
-
-	if err != nil {
-		return nil, err
-	}
-	return zr, nil
 }
 
 func (b *FileBackend) List(p string) ([]File, error) {
