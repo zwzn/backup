@@ -18,6 +18,7 @@ package cmd
 import (
 	"log"
 
+	"github.com/abibby/backup/backend"
 	"github.com/abibby/backup/backup"
 	"github.com/abibby/backup/database"
 	"github.com/pkg/errors"
@@ -38,12 +39,15 @@ var backupCmd = &cobra.Command{
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize database")
 		}
-
 		backends, err := getBackends()
 		if err != nil {
 			return err
 		}
-
+		for _, b := range backends {
+			if b, ok := b.(backend.Closer); ok {
+				defer b.Close()
+			}
+		}
 		return backup.Backup(db, dir, &backup.Options{
 			Ignore:   viper.GetStringSlice("ignore"),
 			Backends: backends,

@@ -23,6 +23,10 @@ type Backend interface {
 	Read(path string) (File, error)
 }
 
+type Closer interface {
+	Close() error
+}
+
 func Load(connection string) (Backend, error) {
 	u, err := url.Parse(connection)
 	if err != nil {

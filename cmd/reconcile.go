@@ -16,6 +16,7 @@ limitations under the License.
 package cmd
 
 import (
+	"github.com/abibby/backup/backend"
 	"github.com/abibby/backup/database"
 	"github.com/abibby/backup/reconcile"
 	"github.com/pkg/errors"
@@ -38,8 +39,10 @@ var reconcileCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-
 		for _, b := range backends {
+			if b, ok := b.(backend.Closer); ok {
+				defer b.Close()
+			}
 			err = reconcile.Reconcile(db, b)
 			if err != nil {
 				return err
