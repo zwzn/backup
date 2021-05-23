@@ -1,5 +1,5 @@
 /*
-Copyright © 2020 NAME HERE <EMAIL ADDRESS>
+Copyright © 2021 NAME HERE <EMAIL ADDRESS>
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -16,24 +16,19 @@ limitations under the License.
 package cmd
 
 import (
-	"log"
-
-	"github.com/abibby/backup/backup"
 	"github.com/abibby/backup/database"
+	"github.com/abibby/backup/reconcile"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-// backupCmd represents the backup command
-var backupCmd = &cobra.Command{
-	Use:   "backup",
-	Short: "Initiate a backup to the backup server",
+// reconcileCmd represents the reconcile command
+var reconcileCmd = &cobra.Command{
+	Use:   "reconcile",
+	Short: "Update the local database to match the remote storage backend",
 	Long:  ``,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		dir := viper.GetString("dir")
-		log.Printf("Backing up directory %s", dir)
-
 		db, err := database.Open(viper.GetString("database"))
 		if err != nil {
 			return errors.Wrap(err, "failed to initialize database")
@@ -44,16 +39,21 @@ var backupCmd = &cobra.Command{
 			return err
 		}
 
-		return backup.Backup(db, dir, &backup.Options{
-			Ignore:   viper.GetStringSlice("ignore"),
-			Backends: backends,
-		})
+		reconcile.Reconcile(db, backends)
+		return nil
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(backupCmd)
+	rootCmd.AddCommand(reconcileCmd)
 
-	viper.SetDefault("ignore", []string{})
-	viper.SetDefault("backends", []string{})
+	// Here you will define your flags and configuration settings.
+
+	// Cobra supports Persistent Flags which will work for this command
+	// and all subcommands, e.g.:
+	// reconcileCmd.PersistentFlags().String("foo", "", "A help for foo")
+
+	// Cobra supports local flags which will only run when this command
+	// is called directly, e.g.:
+	// reconcileCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }

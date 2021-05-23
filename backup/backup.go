@@ -1,7 +1,6 @@
 package backup
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -12,8 +11,8 @@ import (
 	"time"
 
 	"github.com/abibby/backup/backend"
+	"github.com/abibby/backup/database"
 	"github.com/pkg/errors"
-	"go.etcd.io/bbolt"
 )
 
 type Options struct {
@@ -32,26 +31,17 @@ func printTime(start time.Time) {
 	fmt.Println(t)
 }
 
-func Backup(dir string, o *Options) error {
-	db, err := bbolt.Open("./db.bolt", 0644, nil)
+func Backup(db *database.DB, dir string, o *Options) error {
+	err := db.InitializeBackends(o.Backends)
 	if err != nil {
-		return errors.Wrap(err, "failed to initialize database")
-	}
-	for _, b := range o.Backends {
-		err = db.Update(func(tx *bbolt.Tx) error {
-			_, err := tx.CreateBucketIfNotExists([]byte(b.URI()))
-			return err
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to create database bucket")
-		}
+		return errors.Wrap(err, "failed to initialize backends in local database")
 	}
 	defer printTime(time.Now())
 	err = backupFolder(dir, db, o)
 	return err
 }
 
-func backupFolder(dir string, db *bbolt.DB, o *Options) error {
+func backupFolder(dir string, db *database.DB, o *Options) error {
 	var err error
 	files, err := ioutil.ReadDir(dir)
 
@@ -83,8 +73,8 @@ func backupFolder(dir string, db *bbolt.DB, o *Options) error {
 	return nil
 }
 
-func backupFile(db *bbolt.DB, b backend.Backend, p string, f os.FileInfo) error {
-	ut, err := getUpdatedTime(b.URI(), p, db)
+func backupFile(db *database.DB, b backend.Backend, p string, f os.FileInfo) error {
+	ut, err := db.GetUpdatedTime(b.URI(), p)
 	if err != nil {
 		return err
 	}
@@ -103,39 +93,12 @@ func backupFile(db *bbolt.DB, b backend.Backend, p string, f os.FileInfo) error 
 		}
 		file.Close()
 
-		err = setUpdatedTime(b.URI(), p, db, t)
+		err = db.SetUpdatedTime(b.URI(), p, t)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func getUpdatedTime(config, path string, db *bbolt.DB) (int64, error) {
-	var t int64
-	err := db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte(config))
-		by := b.Get([]byte(path))
-
-		if by != nil {
-			t = int64(binary.LittleEndian.Uint64(by))
-		}
-
-		return nil
-	})
-
-	return t, errors.Wrap(err, "failed to read database")
-}
-
-func setUpdatedTime(config, path string, db *bbolt.DB, t time.Time) error {
-	err := db.Update(func(tx *bbolt.Tx) error {
-		timeBytes := make([]byte, 8)
-		b := tx.Bucket([]byte(config))
-		binary.LittleEndian.PutUint64(timeBytes, uint64(t.Unix()))
-		return b.Put([]byte(path), timeBytes)
-	})
-
-	return errors.Wrap(err, "failed to update database")
 }
 
 var regexCache = map[string]*regexp.Regexp{}

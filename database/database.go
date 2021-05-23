@@ -1,0 +1,68 @@
+package database
+
+import (
+	"encoding/binary"
+	"time"
+
+	"github.com/abibby/backup/backend"
+	"github.com/pkg/errors"
+	"go.etcd.io/bbolt"
+)
+
+type DB struct {
+	db *bbolt.DB
+}
+
+func Open(path string) (*DB, error) {
+	db, err := bbolt.Open(path, 0644, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to open database")
+	}
+
+	return &DB{
+		db: db,
+	}, err
+}
+
+func (db *DB) InitializeBackends(backends []backend.Backend) error {
+	err := db.db.Update(func(tx *bbolt.Tx) error {
+		for _, b := range backends {
+			_, err := tx.CreateBucketIfNotExists([]byte(b.URI()))
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create database bucket")
+	}
+	return nil
+}
+
+func (db *DB) GetUpdatedTime(config, path string) (int64, error) {
+	var t int64
+	err := db.db.View(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(config))
+		by := b.Get([]byte(path))
+
+		if by != nil {
+			t = int64(binary.LittleEndian.Uint64(by))
+		}
+
+		return nil
+	})
+
+	return t, errors.Wrap(err, "failed to read database")
+}
+
+func (db *DB) SetUpdatedTime(config, path string, t time.Time) error {
+	err := db.db.Update(func(tx *bbolt.Tx) error {
+		timeBytes := make([]byte, 8)
+		b := tx.Bucket([]byte(config))
+		binary.LittleEndian.PutUint64(timeBytes, uint64(t.Unix()))
+		return b.Put([]byte(path), timeBytes)
+	})
+
+	return errors.Wrap(err, "failed to update database")
+}
