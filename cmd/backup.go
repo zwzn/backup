@@ -16,6 +16,8 @@ limitations under the License.
 package cmd
 
 import (
+	"log"
+
 	"github.com/abibby/backup/backend"
 	"github.com/abibby/backup/backup"
 	"github.com/spf13/cobra"
@@ -38,6 +40,7 @@ var backupCmd = &cobra.Command{
 			backends = append(backends, b)
 		}
 		dir := viper.GetString("dir")
+		log.Printf("Backing up directory %s", dir)
 		return backup.Backup(dir, &backup.Options{
 			Ignore:   viper.GetStringSlice("ignore"),
 			Backends: backends,

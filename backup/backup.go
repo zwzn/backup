@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"regexp"
@@ -14,8 +15,6 @@ import (
 	"github.com/pkg/errors"
 	"go.etcd.io/bbolt"
 )
-
-var filesBackedUp = 0
 
 type Options struct {
 	Backends []backend.Backend
@@ -70,13 +69,15 @@ func backupFolder(dir string, db *bbolt.DB, o *Options) error {
 			if err != nil {
 				return err
 			}
+		} else if f.Mode()&os.ModeSymlink != 0 {
 		} else {
 			for _, b := range o.Backends {
 				err = backupFile(db, b, p, f)
 				if err != nil {
-					return err
+					log.Printf("failed to backup file %s: %v\n", p, err)
 				}
 			}
+
 		}
 	}
 	return nil
@@ -107,8 +108,6 @@ func backupFile(db *bbolt.DB, b backend.Backend, p string, f os.FileInfo) error 
 			return err
 		}
 	}
-	filesBackedUp++
-	fmt.Printf("\r%d", filesBackedUp)
 	return nil
 }
 
@@ -158,6 +157,7 @@ func toRegex(glob string) *regexp.Regexp {
 		}
 		strRe += strings.Join(reParts, `\/`)
 		strRe += "$"
+
 		re = regexp.MustCompile(strRe)
 		regexCache[glob] = re
 	}
