@@ -39,7 +39,12 @@ var reconcileCmd = &cobra.Command{
 			return err
 		}
 
-		reconcile.Reconcile(db, backends)
+		for _, b := range backends {
+			err = reconcile.Reconcile(db, b)
+			if err != nil {
+				return err
+			}
+		}
 		return nil
 	},
 }

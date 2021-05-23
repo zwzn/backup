@@ -74,7 +74,7 @@ func backupFolder(dir string, db *database.DB, o *Options) error {
 }
 
 func backupFile(db *database.DB, b backend.Backend, p string, f os.FileInfo) error {
-	ut, err := db.GetUpdatedTime(b.URI(), p)
+	ut, err := db.GetUpdatedTime(b, p)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func backupFile(db *database.DB, b backend.Backend, p string, f os.FileInfo) err
 		}
 		file.Close()
 
-		err = db.SetUpdatedTime(b.URI(), p, t)
+		err = db.SetUpdatedTime(b, p, t)
 		if err != nil {
 			return err
 		}
