@@ -37,7 +37,17 @@ func (f *SFTPFile) IsDir() bool {
 }
 
 func (f *SFTPFile) Data(t time.Time) (io.ReadCloser, error) {
-	return nil, nil
+	p := f.backend.path(f.name, t)
+	file, err := f.backend.sftpClient.Open(p)
+	if err != nil {
+		return nil, err
+	}
+	zr, err := gzip.NewReader(file)
+
+	if err != nil {
+		return nil, err
+	}
+	return zr, nil
 }
 
 type SFTPBackend struct {
