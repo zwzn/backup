@@ -8,14 +8,12 @@ import (
 	"io/ioutil"
 	"log"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/smithy-go/logging"
 )
 
 type S3File struct {
@@ -50,14 +48,8 @@ type S3Backend struct {
 
 func init() {
 	Register("s3", func(u *url.URL) (Backend, error) {
-		parts := strings.SplitN(u.Host, ".", 3)
-		if len(parts) != 3 {
-			return nil, fmt.Errorf("host did not contain bucket and region")
-		}
-
-		bucket := parts[0]
-		region := parts[1]
-		host := parts[2]
+		region := u.Query().Get("region")
+		bucket := u.Query().Get("bucket")
 
 		client := s3.New(s3.Options{
 			Region: region,
@@ -70,16 +62,9 @@ func init() {
 			}),
 			EndpointResolver: s3.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
 				return aws.Endpoint{
-					URL: fmt.Sprintf("https://%s.%s", region, host),
+					URL: fmt.Sprintf("https://%s", u.Host),
 				}, nil
 			}),
-			Logger: logging.NewStandardLogger(os.Stdout),
-			ClientLogMode: aws.LogRetries |
-				// aws.LogSigning |
-				aws.LogRequest |
-				// aws.LogRequestWithBody |
-				aws.LogResponse |
-				aws.LogResponseWithBody,
 		})
 
 		return &S3Backend{
@@ -100,49 +85,56 @@ func (b *S3Backend) path(p string, t time.Time) string {
 }
 
 func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
+	log.Printf("Write %s", p)
 	ctx := context.Background()
 
-	bdata, err := ioutil.ReadAll(data)
+	dataBytes, err := ioutil.ReadAll(data)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("Backing up %s", p)
-	// contentType := strings.Split(http.DetectContentType(bdata), ";")[0]
-
 	_, err = b.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(b.bucket),
-		Key:    aws.String(p),
-		Body:   bytes.NewReader(bdata),
-		// ContentType: aws.String(contentType),
-		// ContentLength: int64(len(bdata)),
-		// ContentMD5:    aws.String(base64.StdEncoding.EncodeToString(md5.New().Sum(bdata))),
-
+		Key:    aws.String(b.path(p, t)),
+		Body:   bytes.NewReader(dataBytes),
 	})
-
-	// o, err := b.client.ListObjects(ctx, &s3.ListObjectsInput{
-	// 	Bucket: aws.String(b.bucket),
-	// })
-	os.Exit(1)
 
 	return err
 }
 
 func (b *S3Backend) List(p string) ([]File, error) {
-	panic("not implemented")
-
 	ctx := context.Background()
-	_, err := b.client.ListObjects(ctx, &s3.ListObjectsInput{
+	objects, err := b.client.ListObjects(ctx, &s3.ListObjectsInput{
 		Bucket: aws.String(b.bucket),
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return nil, nil
+	filesMap := map[string]*S3File{}
+
+	for _, object := range objects.Contents {
+		filePath, t := splitName(strings.Replace(*object.Key, b.root, "", 1))
+		file, ok := filesMap[filePath]
+		if ok {
+			file.versions = append(file.versions, t)
+		} else {
+			filesMap[filePath] = &S3File{
+				backend:  b,
+				name:     filePath,
+				versions: []time.Time{t},
+				isDir:    false,
+			}
+		}
+	}
+
+	files := make([]File, 0, len(objects.Contents))
+	for _, file := range filesMap {
+		files = append(files, file)
+	}
+	return files, err
 }
 
 func (b *S3Backend) Read(p string) (File, error) {
 	panic("not implemented")
-	return nil, nil
 }

@@ -35,7 +35,11 @@ func reconcile(bucket *bbolt.Bucket, b backend.Backend, path string) error {
 			reconcile(bucket, b, fullPath)
 		} else {
 			versions := f.Versions()
-			database.SetUpdatedTime(bucket, fullPath, versions[len(versions)-1])
+
+			err = database.SetUpdatedTime(bucket, fullPath, versions[len(versions)-1])
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
