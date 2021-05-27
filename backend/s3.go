@@ -50,14 +50,15 @@ func init() {
 	Register("s3", func(u *url.URL) (Backend, error) {
 		region := u.Query().Get("region")
 		bucket := u.Query().Get("bucket")
+		keyID := u.Query().Get("key-id")
+		secretKey := u.Query().Get("secret-key")
 
 		client := s3.New(s3.Options{
 			Region: region,
 			Credentials: aws.CredentialsProviderFunc(func(c context.Context) (aws.Credentials, error) {
-				password, _ := u.User.Password()
 				return aws.Credentials{
-					AccessKeyID:     u.User.Username(),
-					SecretAccessKey: password,
+					AccessKeyID:     keyID,
+					SecretAccessKey: secretKey,
 				}, nil
 			}),
 			EndpointResolver: s3.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
