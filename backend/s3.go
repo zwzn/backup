@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/url"
 	"path"
 	"strings"
@@ -85,7 +84,6 @@ func (b *S3Backend) path(p string, t time.Time) string {
 }
 
 func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
-	log.Printf("Write %s", p)
 	ctx := context.Background()
 
 	dataBytes, err := ioutil.ReadAll(data)
