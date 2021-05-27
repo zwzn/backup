@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -104,6 +105,7 @@ func (b *S3Backend) List(p string) ([]File, error) {
 	ctx := context.Background()
 	objects, err := b.client.ListObjects(ctx, &s3.ListObjectsInput{
 		Bucket: aws.String(b.bucket),
+		Prefix: aws.String(path.Join(b.root, p)),
 	})
 	if err != nil {
 		return nil, err
@@ -134,5 +136,20 @@ func (b *S3Backend) List(p string) ([]File, error) {
 }
 
 func (b *S3Backend) Read(p string) (File, error) {
-	panic("not implemented")
+	files, err := b.List(p)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(files) != 1 {
+		return nil, os.ErrNotExist
+	}
+
+	file := files[0]
+
+	if file.Name() != p {
+		return nil, os.ErrNotExist
+	}
+
+	return file, nil
 }
