@@ -6,17 +6,16 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"net/url"
 	"os"
 	"path"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pkg/errors"
 )
 
@@ -44,10 +43,11 @@ func (f *S3File) Data(t time.Time) (io.ReadCloser, error) {
 }
 
 type S3Backend struct {
-	root   string
-	host   string
-	bucket string
-	client *s3.Client
+	root               string
+	host               string
+	bucket             string
+	client             *s3.Client
+	multipartChunkSize int64
 }
 
 func init() {
@@ -73,10 +73,11 @@ func init() {
 		})
 
 		return &S3Backend{
-			root:   u.Path,
-			host:   u.Host,
-			bucket: bucket,
-			client: client,
+			root:               u.Path,
+			host:               u.Host,
+			bucket:             bucket,
+			client:             client,
+			multipartChunkSize: 10_000_000,
 		}, nil
 	})
 }
@@ -103,7 +104,7 @@ func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
 
 	key := b.path(p, t)
 
-	if fileSize < 1000 {
+	if fileSize < b.multipartChunkSize {
 		dataBytes, err := ioutil.ReadAll(data)
 		if err != nil {
 			return err
@@ -117,6 +118,11 @@ func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
 		return err
 	}
 
+	return uploadMultipart(ctx, b, key, data)
+}
+
+func uploadMultipart(ctx context.Context, b *S3Backend, key string, data io.Reader) error {
+
 	upload, err := b.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.bucket),
 		Key:    aws.String(key),
@@ -125,50 +131,44 @@ func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
 		return err
 	}
 
-	readers, err := chunkReader(data, 10000)
+	size, err := readerSize(data)
 	if err != nil {
-		return errors.Wrap(err, "")
+		return errors.Wrap(err, "failed to get file size")
 	}
-	pl(len(readers), func(i int) error {
-		_, err := b.client.UploadPart(ctx, &s3.UploadPartInput{
-			Bucket:     aws.String(b.bucket),
-			Key:        aws.String(key),
-			PartNumber: int32(i),
-			UploadId:   upload.UploadId,
-			Body:       readers[i],
+	parts := []types.CompletedPart{}
+	numChunks := int64(math.Ceil(float64(size) / float64(b.multipartChunkSize)))
+	for i := int64(0); i < numChunks; i++ {
+		length := b.multipartChunkSize
+		if i == numChunks-1 {
+			length = size % b.multipartChunkSize
+		}
+		part, err := b.client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:        aws.String(b.bucket),
+			Key:           aws.String(key),
+			PartNumber:    int32(i + 1),
+			UploadId:      upload.UploadId,
+			Body:          io.NewSectionReader(data.(io.ReaderAt), i*b.multipartChunkSize, b.multipartChunkSize),
+			ContentLength: length,
 		})
-		return err
-	})
+		if err != nil {
+			return errors.Wrap(err, "failed to upload part")
+		}
+		parts = append(parts, types.CompletedPart{
+			ETag:       part.ETag,
+			PartNumber: int32(i + 1),
+		})
+	}
+
 	_, err = b.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(b.bucket),
 		Key:      aws.String(key),
 		UploadId: upload.UploadId,
+		MultipartUpload: &types.CompletedMultipartUpload{
+			Parts: parts,
+		},
 	})
 	if err != nil {
-		return errors.Wrap(err, "")
-	}
-
-	return nil
-}
-
-func pl(length int, callback func(i int) error) error {
-	wg := &sync.WaitGroup{}
-	errors := make([]error, length)
-	for i := 0; i < length; i++ {
-		wg.Add(1)
-		// go func(i int) {
-		errors[i] = callback(i)
-		if errors[i] != nil {
-			log.Print(errors[i])
-		}
-		wg.Done()
-		// }(i)
-	}
-	wg.Wait()
-	for _, err := range errors {
-		if err != nil {
-			return err
-		}
+		return errors.Wrap(err, "failed to complete upload")
 	}
 	return nil
 }
@@ -224,23 +224,6 @@ func (b *S3Backend) Read(p string) (File, error) {
 	}
 
 	return file, nil
-}
-
-func chunkReader(reader io.Reader, chunkSize int64) ([]io.Reader, error) {
-	size, err := readerSize(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	readers := make([]io.Reader, int(math.Ceil(float64(size)/float64(chunkSize))))
-	go func() {
-		for i := range readers {
-			buffer := &bytes.Buffer{}
-			io.CopyN(buffer, reader, chunkSize)
-			readers[i] = buffer
-		}
-	}()
-	return readers, nil
 }
 
 func readerSize(r io.Reader) (int64, error) {
