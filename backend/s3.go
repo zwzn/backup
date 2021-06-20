@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
+	"math"
 	"net/url"
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/pkg/errors"
 )
 
 type S3File struct {
@@ -88,18 +92,85 @@ func (b *S3Backend) path(p string, t time.Time) string {
 func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
 	ctx := context.Background()
 
-	dataBytes, err := ioutil.ReadAll(data)
+	fileSize := int64(0)
+
+	if file, ok := data.(*os.File); ok {
+		stat, err := file.Stat()
+		if err == nil {
+			fileSize = stat.Size()
+		}
+	}
+
+	key := b.path(p, t)
+
+	if fileSize < 1000 {
+		dataBytes, err := ioutil.ReadAll(data)
+		if err != nil {
+			return err
+		}
+
+		_, err = b.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(b.bucket),
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(dataBytes),
+		})
+		return err
+	}
+
+	upload, err := b.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+	})
 	if err != nil {
 		return err
 	}
 
-	_, err = b.client.PutObject(ctx, &s3.PutObjectInput{
-		Bucket: aws.String(b.bucket),
-		Key:    aws.String(b.path(p, t)),
-		Body:   bytes.NewReader(dataBytes),
+	readers, err := chunkReader(data, 10000)
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
+	pl(len(readers), func(i int) error {
+		_, err := b.client.UploadPart(ctx, &s3.UploadPartInput{
+			Bucket:     aws.String(b.bucket),
+			Key:        aws.String(key),
+			PartNumber: int32(i),
+			UploadId:   upload.UploadId,
+			Body:       readers[i],
+		})
+		return err
 	})
+	_, err = b.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(b.bucket),
+		Key:      aws.String(key),
+		UploadId: upload.UploadId,
+	})
+	if err != nil {
+		return errors.Wrap(err, "")
+	}
 
-	return err
+	return nil
+}
+
+func pl(length int, callback func(i int) error) error {
+	wg := &sync.WaitGroup{}
+	errors := make([]error, length)
+	for i := 0; i < length; i++ {
+		wg.Add(1)
+		// go func(i int) {
+		errors[i] = callback(i)
+		if errors[i] != nil {
+			log.Print(errors[i])
+		}
+		wg.Done()
+		// }(i)
+	}
+	wg.Wait()
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (b *S3Backend) List(p string) ([]File, error) {
@@ -153,4 +224,34 @@ func (b *S3Backend) Read(p string) (File, error) {
 	}
 
 	return file, nil
+}
+
+func chunkReader(reader io.Reader, chunkSize int64) ([]io.Reader, error) {
+	size, err := readerSize(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	readers := make([]io.Reader, int(math.Ceil(float64(size)/float64(chunkSize))))
+	go func() {
+		for i := range readers {
+			buffer := &bytes.Buffer{}
+			io.CopyN(buffer, reader, chunkSize)
+			readers[i] = buffer
+		}
+	}()
+	return readers, nil
+}
+
+func readerSize(r io.Reader) (int64, error) {
+
+	if r, ok := r.(*os.File); ok {
+		stat, err := r.Stat()
+		if err != nil {
+			return 0, errors.Wrap(err, "unable to get file stat")
+		}
+		return stat.Size(), nil
+	}
+
+	return 0, fmt.Errorf("this reader does not support length")
 }
