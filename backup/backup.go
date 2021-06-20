@@ -57,7 +57,7 @@ func backupFolder(dir string, db *database.DB, o *Options) error {
 		if f.IsDir() {
 			err = backupFolder(p, db, o)
 			if err != nil {
-				return err
+				log.Printf("failed to backup file %s: %v\n", p, err)
 			}
 		} else if f.Mode()&os.ModeSymlink != 0 {
 		} else {
