@@ -51,6 +51,7 @@ var backupCmd = &cobra.Command{
 		return backup.Backup(db, dir, &backup.Options{
 			Ignore:   viper.GetStringSlice("ignore"),
 			Backends: backends,
+			Logger:   logger,
 		})
 	},
 }

@@ -3,7 +3,6 @@ package backup
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path"
 	"regexp"
@@ -12,12 +11,14 @@ import (
 
 	"github.com/abibby/backup/backend"
 	"github.com/abibby/backup/database"
+	"github.com/abibby/backup/vlog"
 	"github.com/pkg/errors"
 )
 
 type Options struct {
 	Backends []backend.Backend
 	Ignore   []string
+	Logger   *vlog.VLogger
 }
 
 func printTime(start time.Time) {
@@ -57,17 +58,18 @@ func backupFolder(dir string, db *database.DB, o *Options) error {
 		if f.IsDir() {
 			err = backupFolder(p, db, o)
 			if err != nil {
-				log.Printf("failed to backup file %s: %v\n", p, err)
+				o.Logger.Printf("failed to backup file %s: %v\n", p, err)
 			}
 		} else if f.Mode()&os.ModeSymlink != 0 {
 		} else {
+			o.Logger.Verbosef("Backing up %s", p)
 			for _, b := range o.Backends {
 				err = backupFile(db, b, p, f)
 				if err != nil {
-					log.Printf("failed to backup file %s: %v\n", p, err)
+					o.Logger.Printf("failed to backup file %s: %v\n", p, err)
 				}
-			}
 
+			}
 		}
 	}
 	return nil

@@ -20,11 +20,14 @@ import (
 	"os"
 	"path"
 
+	"github.com/abibby/backup/vlog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 var cfgFile string
+var logger = vlog.New()
+var verbose = false
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -46,6 +49,7 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/backup/config.yml)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "V", false, "")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -73,4 +77,6 @@ func initConfig() {
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
 	}
+
+	logger.SetVerbose(verbose)
 }
