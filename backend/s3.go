@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/url"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abibby/salusa/set"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -48,14 +48,16 @@ type S3Backend struct {
 	bucket             string
 	client             *s3.Client
 	multipartChunkSize int64
+	createdFolders     set.Set[string]
 }
 
 func init() {
 	Register("s3", func(u *url.URL) (Backend, error) {
+
 		region := u.Query().Get("region")
-		bucket := u.Query().Get("bucket")
-		keyID := u.Query().Get("key-id")
-		secretKey := u.Query().Get("secret-key")
+		bucket := u.Path[1:]
+		keyID := u.User.Username()
+		secretKey, _ := u.User.Password()
 
 		client := s3.New(s3.Options{
 			Region: region,
@@ -78,6 +80,7 @@ func init() {
 			bucket:             bucket,
 			client:             client,
 			multipartChunkSize: 10_000_000,
+			createdFolders:     set.New[string](),
 		}, nil
 	})
 }
@@ -87,7 +90,7 @@ func (b *S3Backend) URI() string {
 }
 
 func (b *S3Backend) path(p string, t time.Time) string {
-	return path.Join(b.root, fmt.Sprintf("%s-%d.gz", p, t.Unix()))
+	return strings.TrimPrefix(path.Join(b.root, fmt.Sprintf("%s-%d.gz", p, t.Unix())), "/")
 }
 
 func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
@@ -104,25 +107,54 @@ func (b *S3Backend) Write(p string, t time.Time, data io.Reader) error {
 
 	key := b.path(p, t)
 
+	err := b.mkdir(ctx, path.Dir(key))
+	if err != nil {
+		return err
+	}
 	if fileSize < b.multipartChunkSize {
-		dataBytes, err := ioutil.ReadAll(data)
-		if err != nil {
-			return err
-		}
-
-		_, err = b.client.PutObject(ctx, &s3.PutObjectInput{
+		_, err := b.client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(b.bucket),
 			Key:    aws.String(key),
-			Body:   bytes.NewReader(dataBytes),
+			Body:   data,
 		})
 		return err
 	}
 
-	return uploadMultipart(ctx, b, key, data)
+	return b.uploadMultipart(ctx, key, data)
 }
 
-func uploadMultipart(ctx context.Context, b *S3Backend, key string, data io.Reader) error {
+func (b *S3Backend) mkdir(ctx context.Context, key string) error {
+	if b.createdFolders.Has(key) {
+		return nil
+	}
 
+	objects, err := b.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(b.bucket),
+		Prefix:  aws.String(key),
+		MaxKeys: 1,
+	})
+	if err != nil {
+		return err
+	}
+
+	if len(objects.Contents) > 0 {
+		b.createdFolders.Add(key)
+		return nil
+	}
+
+	_, err = b.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+		Body:   &bytes.Buffer{},
+	})
+	if err != nil {
+		return err
+	}
+
+	b.createdFolders.Add(key)
+	return nil
+}
+func (b *S3Backend) uploadMultipart(ctx context.Context, key string, data io.Reader) error {
 	upload, err := b.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(b.bucket),
 		Key:    aws.String(key),

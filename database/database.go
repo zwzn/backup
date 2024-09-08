@@ -76,3 +76,6 @@ func (db *DB) Update(b backend.Backend, callback func(tx *bbolt.Tx, bucketName [
 		return callback(tx, []byte(b.URI()))
 	})
 }
+func (db *DB) Close() error {
+	return db.db.Close()
+}

@@ -1,0 +1,8 @@
+dir: ./
+backends:
+  - file://./backup-folder
+ignore:
+  - ./backup-folder
+database: ./db.bolt
+watch:
+  frequency: 24h

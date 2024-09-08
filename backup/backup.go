@@ -1,8 +1,8 @@
 package backup
 
 import (
-	"fmt"
 	"io/ioutil"
+	"log/slog"
 	"os"
 	"path"
 	"regexp"
@@ -11,25 +11,23 @@ import (
 
 	"github.com/abibby/backup/backend"
 	"github.com/abibby/backup/database"
-	"github.com/abibby/backup/vlog"
 	"github.com/pkg/errors"
 )
 
 type Options struct {
 	Backends []backend.Backend
 	Ignore   []string
-	Logger   *vlog.VLogger
 }
 
 func printTime(start time.Time) {
-	t := time.Since(start)
-	if t > time.Second {
-		t = t.Truncate(time.Second)
+	duration := time.Since(start)
+	if duration > time.Second {
+		duration = duration.Truncate(time.Second)
 	}
-	if t > time.Millisecond {
-		t = t.Truncate(time.Millisecond)
+	if duration > time.Millisecond {
+		duration = duration.Truncate(time.Millisecond)
 	}
-	fmt.Println(t)
+	slog.Info("Backup complete", "duration", duration)
 }
 
 func Backup(db *database.DB, dir string, o *Options) error {
@@ -38,8 +36,8 @@ func Backup(db *database.DB, dir string, o *Options) error {
 		return errors.Wrap(err, "failed to initialize backends in local database")
 	}
 	defer printTime(time.Now())
-	err = backupFolder(dir, db, o)
-	return err
+
+	return backupFolder(dir, db, o)
 }
 
 func backupFolder(dir string, db *database.DB, o *Options) error {
@@ -58,15 +56,15 @@ func backupFolder(dir string, db *database.DB, o *Options) error {
 		if f.IsDir() {
 			err = backupFolder(p, db, o)
 			if err != nil {
-				o.Logger.Printf("failed to backup file %s: %v\n", p, err)
+				slog.Error("failed to backup file", "file", p, "err", err)
 			}
 		} else if f.Mode()&os.ModeSymlink != 0 {
 		} else {
-			o.Logger.Verbosef("Backing up %s", p)
+			slog.Debug("backing up", "file", p)
 			for _, b := range o.Backends {
 				err = backupFile(db, b, p, f)
 				if err != nil {
-					o.Logger.Printf("failed to backup file %s: %v\n", p, err)
+					slog.Error("failed to backup file", "file", p, "err", err)
 				}
 
 			}
@@ -81,24 +79,25 @@ func backupFile(db *database.DB, b backend.Backend, p string, f os.FileInfo) err
 		return err
 	}
 
-	if ut < f.ModTime().Unix() {
-		t := time.Now()
+	if ut >= f.ModTime().Unix() {
+		return nil
+	}
+	t := time.Now()
 
-		file, err := os.Open(p)
-		if err != nil {
-			return err
-		}
+	file, err := os.Open(p)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-		err = b.Write(p, t, file)
-		if err != nil {
-			return err
-		}
-		file.Close()
+	err = b.Write(p, t, file)
+	if err != nil {
+		return err
+	}
 
-		err = db.SetUpdatedTime(b, p, t)
-		if err != nil {
-			return err
-		}
+	err = db.SetUpdatedTime(b, p, t)
+	if err != nil {
+		return err
 	}
 	return nil
 }
