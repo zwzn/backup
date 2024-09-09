@@ -75,7 +75,10 @@ func Backup(db *database.DB, dir string, o *Options) error {
 			case now := <-ticker.C:
 				runTime := now.Sub(start)
 				remaining := total - done
-				timePerFile := runTime / time.Duration(done)
+				var timePerFile time.Duration
+				if done > 0 {
+					timePerFile = runTime / time.Duration(done)
+				}
 				timeRemaining := timePerFile * time.Duration(remaining)
 				endingAt := now.Add(timeRemaining)
 				slog.Info("backing up",
