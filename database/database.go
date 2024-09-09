@@ -14,7 +14,11 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	db, err := bbolt.Open(path, 0644, nil)
+	db, err := bbolt.Open(path, 0644, &bbolt.Options{
+		Timeout:      time.Second * 10,
+		NoGrowSync:   false,
+		FreelistType: bbolt.FreelistArrayType,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to open database")
 	}
