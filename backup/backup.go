@@ -3,7 +3,6 @@ package backup
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path"
@@ -20,6 +19,11 @@ import (
 type Options struct {
 	Backends []backend.Backend
 	Ignore   []string
+}
+
+type File struct {
+	Path     string
+	Modified time.Time
 }
 
 func printTime(start time.Time) {
@@ -41,37 +45,42 @@ func Backup(db *database.DB, dir string, o *Options) error {
 	defer printTime(time.Now())
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
-	files := stack.NewSyncDone[string]()
-	filesChan := make(chan string, 16)
-	doneChan := make(chan struct{}, 16)
+	files := stack.NewSyncDone[File]()
+	fileQueue := make(chan File, 16)
+	fileComplete := make(chan struct{}, 16)
+	backupDone := make(chan struct{})
 
 	var scanError error
 	go func() {
-		scanError = scanFolder(dir, db, o, filesChan)
+		defer wg.Done()
+		scanError = scanFolder(dir, db, o, fileQueue)
 		files.Finish(true)
-		wg.Done()
 	}()
 
 	var backupError error
 	go func() {
-		backupError = backupFiles(db, o, files, doneChan)
-		wg.Done()
+		defer wg.Done()
+		backupError = backupFiles(db, o, files, fileComplete)
+		backupDone <- struct{}{}
 	}()
 
 	go func() {
+		defer wg.Done()
 		total := 0
 		done := 0
 		ticker := time.NewTicker(time.Second)
 		start := time.Now()
 		for {
 			select {
-			case f := <-filesChan:
+			case f := <-fileQueue:
 				files.Push(f)
 				total++
-			case <-doneChan:
+			case <-fileComplete:
 				done++
+			case <-backupDone:
+				return
 			case now := <-ticker.C:
 				runTime := now.Sub(start)
 				remaining := total - done
@@ -92,11 +101,13 @@ func Backup(db *database.DB, dir string, o *Options) error {
 	}()
 
 	wg.Wait()
-	defer close(filesChan)
+	close(backupDone)
+	close(fileQueue)
+	close(fileComplete)
 
 	return errors.Join(scanError, backupError)
 }
-func scanFolder(dir string, db *database.DB, o *Options, filesChan chan string) error {
+func scanFolder(dir string, db *database.DB, o *Options, filesChan chan File) error {
 	var err error
 	files, err := os.ReadDir(dir)
 
@@ -115,41 +126,35 @@ func scanFolder(dir string, db *database.DB, o *Options, filesChan chan string) 
 				slog.Error("failed to backup file", "file", p, "err", err)
 			}
 		} else if f.Type()&os.ModeSymlink != 0 {
+			// ignore symlinks
 		} else {
-			for _, b := range o.Backends {
-				update, err := needsUpdate(db, b, p, f)
-				if err != nil {
-					slog.Error("failed to queue file", "file", p, "err", err)
-					continue
-				}
-				if update {
-					slog.Debug("queueing", "file", p, "backend", b.URI())
-					filesChan <- p
-				}
-
+			info, err := f.Info()
+			if err != nil {
+				slog.Error("failed to queue file", "file", p, "err", err)
+				continue
+			}
+			filesChan <- File{
+				Path:     p,
+				Modified: info.ModTime(),
 			}
 		}
 	}
 	return nil
 }
 
-func needsUpdate(db *database.DB, b backend.Backend, p string, f fs.DirEntry) (bool, error) {
-	updatedTime, err := db.GetUpdatedTime(b, p)
+func needsUpdate(db *database.DB, b backend.Backend, f File) (bool, error) {
+	updatedTime, err := db.GetUpdatedTime(b, f.Path)
 	if err != nil {
 		return false, err
 	}
 
-	info, err := f.Info()
-	if err != nil {
-		return false, err
-	}
-	if updatedTime >= info.ModTime().Unix() {
+	if updatedTime >= f.Modified.Unix() {
 		return false, nil
 	}
 
 	return true, nil
 }
-func backupFiles(db *database.DB, o *Options, files *stack.SyncDoneStack[string], done chan struct{}) error {
+func backupFiles(db *database.DB, o *Options, files *stack.SyncDoneStack[File], done chan struct{}) error {
 	for f := range files.All() {
 		for _, backend := range o.Backends {
 			err := backupFile(db, backend, f)
@@ -162,8 +167,15 @@ func backupFiles(db *database.DB, o *Options, files *stack.SyncDoneStack[string]
 	return nil
 }
 
-func backupFile(db *database.DB, b backend.Backend, p string) error {
-	file, err := os.Open(p)
+func backupFile(db *database.DB, b backend.Backend, f File) error {
+	update, err := needsUpdate(db, b, f)
+	if err != nil {
+		return err
+	}
+	if !update {
+		return nil
+	}
+	file, err := os.Open(f.Path)
 	if err != nil {
 		return err
 	}
@@ -174,13 +186,13 @@ func backupFile(db *database.DB, b backend.Backend, p string) error {
 		return err
 	}
 
-	slog.Debug("back up file", "file", p)
-	err = b.Write(p, info.ModTime(), file)
+	slog.Debug("back up file", "file", f.Path)
+	err = b.Write(f.Path, info.ModTime(), file)
 	if err != nil {
 		return err
 	}
 
-	err = db.SetUpdatedTime(b, p, info.ModTime())
+	err = db.SetUpdatedTime(b, f.Path, info.ModTime())
 	if err != nil {
 		return err
 	}
